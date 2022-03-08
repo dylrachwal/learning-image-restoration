@@ -1,7 +1,7 @@
 import os
 import numpy as np
 from PIL import Image
-
+from copy import deepcopy
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
@@ -16,11 +16,21 @@ class BSDS300_images(VisionDataset):
     url = "https://www2.eecs.berkeley.edu/Research/Projects/CS/vision/bsds/BSDS300-images.tgz"
     archive_filename = "BSDS300-images.tgz"
 
-    def __init__(self, root, sigma, train=True, transform=None, download=False):
+    def __init__(self, root,noise_type, sigma,threshold = 0.005, lowerValue:int = 5, upperValue= 250, train=True, transform=None, download=False):
         super(BSDS300_images, self).__init__(root, transform=transform)
 
         self.train = train
+        
+        #noise_type
+        self.noise_type=noise_type
+        #parameter for gaussian noise
         self.sigma = sigma / 255
+        
+        #parameter for Salt and Pepper noise 
+        self.threshold = threshold
+        self.lowerValue = lowerValue # 255 would be too high
+        self.upperValue = upperValue # 0 would be too low
+        
         
         self.root = root
         images_basefolder = os.path.join(root, self.basedir, "images")
@@ -57,7 +67,13 @@ class BSDS300_images(VisionDataset):
         im = Image.open(img_name)
         if self.transform:
             im = self.transform(im)
-        im_noisy = im + torch.randn(im.size()) * self.sigma
+        if self.noise_type == 'Gaussian':
+            im_noisy = im + torch.randn(im.size()) * self.sigma
+        elif self.noise_type =='SnP':
+            random_matrix = np.random.random(im.shape)   
+            im_noisy=deepcopy(im)
+            im_noisy[random_matrix>=(1-self.threshold)] = self.upperValue
+            im_noisy[random_matrix<=self.threshold] = self.lowerValue
         return im_noisy, im
 
 

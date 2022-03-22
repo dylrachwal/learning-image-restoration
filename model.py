@@ -14,7 +14,6 @@ class DiffusionNetStep(nn.Module):
         n_rbf = self.means.shape[0]
         self.weights_rbf = nn.Parameter(torch.ones(n_filters, n_rbf) / n_rbf)
         self.reaction_weight = nn.Parameter(torch.ones(1, dtype=torch.float32))
-    
     def compute_nonlinearity(self, u):
         s = torch.zeros(u.shape, dtype=torch.float32).to(u.device)
         for i in range(len(self.means)):
@@ -39,7 +38,8 @@ class DiffusionNetStep(nn.Module):
         return u
     
     def forward(self, u, f):
-        u = u - (self.compute_diffusion(u) + self.reaction_weight * (u - f))
+        u = u - (self.compute_diffusion(u) + self.reaction_weight *(u - f))
+        #u = u - (self.compute_diffusion(u) + self.reaction_weight * torch.transpose(self.A)@(self.A @ u - f))
         return u
 
 

@@ -7,7 +7,7 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 from torchvision.datasets.utils import download_and_extract_archive
 from torchvision.datasets.vision import VisionDataset
-
+from skimage.util import random_noise
 
 class BSDS300_images(VisionDataset):
     basedir = "BSDS300"
@@ -16,21 +16,35 @@ class BSDS300_images(VisionDataset):
     url = "https://www2.eecs.berkeley.edu/Research/Projects/CS/vision/bsds/BSDS300-images.tgz"
     archive_filename = "BSDS300-images.tgz"
 
-    def __init__(self, root,noise_type, sigma,threshold = 0.005, lowerValue:int = 5, upperValue= 250, train=True, transform=None, download=False):
+    def __init__(self, root,noise_type, train=True, transform=None, download=False, parameter={'sigma':25,
+                'threshold':0.05,'lowerValue':5, 'upperValue':250,
+                'amount':0.05,'salt_vs_pepper':0.5}):
         super(BSDS300_images, self).__init__(root, transform=transform)
+        args = {'sigma':25,
+                'threshold':0.05,'lowerValue':5, 'upperValue':250,
+                'amount':0.05,'salt_vs_pepper':0.5}
 
+        diff = set(parameter.keys()) - set(args.keys())
+        if diff:
+           print("Invalid args:",tuple(diff))
+           return
+
+        args.update(parameter)  
         self.train = train
         
         #noise_type
-        self.noise_type=noise_type
+        self.noise_type = noise_type
         #parameter for gaussian noise
-        self.sigma = sigma / 255
+        self.sigma = args['sigma']/255
         
         #parameter for Salt and Pepper noise 
-        self.threshold = threshold
-        self.lowerValue = lowerValue # 255 would be too high
-        self.upperValue = upperValue # 0 would be too low
-        
+        self.threshold = args['threshold']
+        self.lowerValue = args['lowerValue'] / 255 # 255 would be too high
+        self.upperValue = args['upperValue'] / 255 # 0 would be too low
+
+        #parameter for Salt and Pepper noise
+        self.amount = args['amount']
+        self.salt_vs_pepper = args['salt_vs_pepper']
         
         self.root = root
         images_basefolder = os.path.join(root, self.basedir, "images")
@@ -70,15 +84,25 @@ class BSDS300_images(VisionDataset):
         if self.noise_type == 'Gaussian':
             im_noisy = im + torch.randn(im.size()) * self.sigma
         elif self.noise_type =='SnP':
-            random_matrix = np.random.random(im.shape)   
+            random_matrix = torch.randn(im.size())  
             im_noisy=deepcopy(im)
             im_noisy[random_matrix>=(1-self.threshold)] = self.upperValue
             im_noisy[random_matrix<=self.threshold] = self.lowerValue
+
+        elif self.noise_type =='s&p':
+            im_noisy = random_noise(im, self.noise_type, amount=self.amount, salt_vs_pepper=self.salt_vs_pepper)
+        elif self.noise_type =='speckle':
+            im_noisy = random_noise(im, self.noise_type, var=self.sigma)
+            im_noisy=im_noisy.astype('float32')
+        elif self.noise_type == 'poisson':
+            im_noisy = random_noise(im, self.noise_type)
+            im_noisy=im_noisy.astype('float32')
+
         return im_noisy, im
 
 
 class BerkeleyLoader(data.DataLoader):
-    def __init__(self, sigma, train=True, **kwargs):
+    def __init__(self,noise_type, train=True,parameter={'sigma':25,'threshold':0.05,'lowerValue':5, 'upperValue':250,'amount':0.05,'salt_vs_pepper':0.5}, **kwargs):
         if train:
             transform = transforms.Compose([
                 transforms.RandomCrop(90, pad_if_needed=True, padding_mode="reflect"),
@@ -86,8 +110,9 @@ class BerkeleyLoader(data.DataLoader):
             ])
         else:
             transform = transforms.ToTensor()
-        dataset = BSDS300_images("data", sigma, train=train, transform=transform, download=True)
+        dataset = BSDS300_images("data",noise_type, train=train, transform=transform, download=True, parameter=parameter)
         super(BerkeleyLoader, self).__init__(dataset, **kwargs)
+
 
 
 if __name__ == "__main__":

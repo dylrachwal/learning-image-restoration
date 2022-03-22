@@ -13,7 +13,14 @@ from model import DiffusionNet
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model.')
+    parser.add_argument('--noise_type', '-nt',  choices=['Gaussian', 'SnP', 's&p', 'speckle', 'poisson'], default='Gaussian', help='Type of additive noise for training')
     parser.add_argument('--sigma', type=int, default=25, help='Standard deviation of the additive gaussian noise used for training')
+    parser.add_argument('--amount', type=float, default=0.2, help='Value for amount of salt and pepper pixel using skimage')
+    parser.add_argument('--salt_vs_pepper','-sp', type=float, default=0.5, help='Value for proportion of salt/pepper')
+    parser.add_argument('--threshold', type=int, default=0.005, help='threshold for SnP noise')
+    parser.add_argument('--lowervalue', '-lv', type=int, default=5, help='Lower value for SnP noise')
+    parser.add_argument('--uppervalue', '-uv', type=int, default=250, help='Upper value for SnP noise')
+
     parser.add_argument('--steps', '-T', type=int, default=8, help='Number of steps of the net')
     parser.add_argument('--n_filters', '-nf', type=int, default=48, help='Number of filters')
     parser.add_argument('--filter_size', '-fs', type=int, default=7, help='Size of the filters')
@@ -30,8 +37,9 @@ def calc_psnr(im_true, im_noisy):
     im_noisy = im_noisy.detach().cpu().numpy()
     return psnr(im_true, im_noisy)
 
-def training(model, criterion, optimizer, scheduler, epochs, train_loader, test_loader, mode, path):
+def training(model, criterion, optimizer, scheduler, epochs, train_loader, test_loader, mode,path):
     best_psnr = 0
+    not_improvement_counter = 0
     for e in range(epochs):
         print("Epoch", e)
 
@@ -83,13 +91,52 @@ def training(model, criterion, optimizer, scheduler, epochs, train_loader, test_
                 best_psnr = avrg_metric
                 torch.save(model.state_dict(), path)
             scheduler.step(avrg_metric)
+
+
+        ### early stop
+
+        if e == 0:
+          best_loss= loss_train/len(train_loader)
+        else :
+          if best_loss > loss_train/len(train_loader):
+            best_loss= loss_train/len(train_loader)
+            not_improvement_counter = 0
+          else :
+            not_improvement_counter +=1
+        if not_improvement_counter >=6:
+          print("Testing")
+          model.eval()
+          loss_val = 0
+          metric = 0
+          for im_noisy, im in tqdm(test_loader):
+              im_noisy, im = im_noisy.cuda(), im.cuda()
+              im_pred = torch.clone(im_noisy)
+              with torch.no_grad():
+                  im_pred = model(im_pred, im_noisy)
+                  loss = criterion(im_pred, im)
+              metric += calc_psnr(im, im_pred)
+              loss_val += loss.item()
+          avrg_val_loss = loss_val/len(test_loader)
+          avrg_metric = metric / len(test_loader)
+          print("Validation loss : ", avrg_val_loss)
+          print("PSNR : ", avrg_metric)
+      
+          if avrg_metric > best_psnr:
+              print("Best PSNR. Saving model")
+              best_psnr = avrg_metric
+              torch.save(model.state_dict(), path)
+          scheduler.step(avrg_metric)
+          break
     
     return None
 
 if __name__ == '__main__':
     args = parse_args()
-    train_loader = BerkeleyLoader(sigma=args.sigma, train=True, batch_size=1, shuffle=True, num_workers=2)
-    test_loader = BerkeleyLoader(sigma=args.sigma, train=False, num_workers=2)
+    parameter={'sigma':args.sigma,
+                'threshold':args.threshold,'lowerValue':args.lowervalue, 'upperValue':args.uppervalue,
+                'amount':args.amount,'salt_vs_pepper':args.salt_vs_pepper}
+    train_loader = BerkeleyLoader(noise_type=args.noise_type, parameter=parameter, train=True, batch_size=1, shuffle=True, num_workers=2)
+    test_loader = BerkeleyLoader(noise_type=args.noise_type, parameter=parameter, train=False, num_workers=2)
     model = DiffusionNet(T=args.steps, n_rbf=63, n_channels=3, n_filters=args.n_filters, filter_size=args.filter_size).cuda()
     if args.pretrained:
         model.load_state_dict(torch.load(args.pretrained))
